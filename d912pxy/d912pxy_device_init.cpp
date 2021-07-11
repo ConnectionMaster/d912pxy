@@ -49,6 +49,8 @@ void d912pxy_device::Init(IDirect3DDevice9* dev, void* par)
 	FRAME_METRIC_PRESENT(1)
 #endif
 
+	d912pxy_pso_item::hwCacheAllowed = d912pxy_s.config.GetValueB(PXY_CFG_SDB_ALLOW_HW_CACHE);
+
 	if (d912pxy_s.config.GetValueUI32(PXY_CFG_LOG_PERF_GRAPH) || d912pxy_s.config.GetValueUI32(PXY_CFG_EXTRAS_ENABLE))
 		perfGraph = new d912pxy_performance_graph(0);
 	else
@@ -142,9 +144,6 @@ void d912pxy_device::InitVFS()
 	}	
 
 	d912pxy_s.vfs.SetRoot(d912pxy_s.config.GetValueRaw(PXY_CFG_VFS_ROOT));
-
-	UINT64 memcacheMask = d912pxy_s.config.GetValueXI64(PXY_CFG_VFS_MEMCACHE_MASK);
-	
 	d912pxy_s.vfs.LoadVFS();
 }
 
@@ -156,8 +155,16 @@ void d912pxy_device::InitClassFields()
 	d912pxy_hlsl_generator::allowPP_suffix = d912pxy_s.config.GetValueUI32(PXY_CFG_SDB_ALLOW_PP_SUFFIX);
 	d912pxy_hlsl_generator::NaNguard_flag = d912pxy_s.config.GetValueUI32(PXY_CFG_SDB_NAN_GUARD_FLAG);
 
-	d912pxy_vstream::threadedCtor = d912pxy_s.config.GetValueUI32(PXY_CFG_MT_VSTREAM_CTOR);
+	d912pxy_vstream::threadedCtor = d912pxy_s.config.GetValueUI32(PXY_CFG_MT_VSTREAM_CTOR);	
 	d912pxy_surface::threadedCtor = d912pxy_s.config.GetValueUI32(PXY_CFG_MT_SURFACE_CTOR);
+
+	if (d912pxy_s.dev.getCPUCoreCount() < 3)
+	{
+		d912pxy_vstream::threadedCtor = 0;
+		d912pxy_surface::threadedCtor = 0;
+		//enabling on low core count systems create more lag than profit
+		LOG_INFO_DTDM("Detected less than 3 cores, threaded constructors are force disabled");
+	}
 
 	d912pxy_resource::residencyOverride = (d912pxy_s.config.GetValueUI32(PXY_CFG_POOLING_KEEP_RESIDENT) != 0) * 2;
 }
@@ -371,9 +378,12 @@ void d912pxy_device::PrintInfoBanner()
 		LOG_INFO_DTDM("- commit limit: %0.3f Gb", (ramInfo.ullTotalPageFile >> 20llu)/ 1024.0f);
 		LOG_INFO_DTDM("- usable: %0.3f Gb", (ramInfo.ullAvailPageFile >> 20llu) / 1024.0f);
 		LOG_INFO_DTDM("- phys usable: %0.3f Gb", (ramInfo.ullAvailPhys >> 20llu) / 1024.0f);
+
+		bigRAMamount = (ramInfo.ullTotalPhys >> 30llu) >= 16;
 	}
 	else {
 		LOG_ERR_DTDM("No info about system RAM is available");
+		bigRAMamount = false;
 	}
 
 	//string includes manufacturer, model and clockspeed
@@ -402,6 +412,14 @@ void d912pxy_device::InitDefaultSwapChain(D3DPRESENT_PARAMETERS* pPresentationPa
 	swapchains[0] = &d912pxy_swapchain::d912pxy_swapchain_com(0, pPresentationParameters)->swapchain;
 
 	d912pxy_s.render.iframe.SetSwapper(swapchains[0]);
+}
+
+void d912pxy_device::DisableSystemSleepMode()
+{
+	if (SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED) == NULL)
+		LOG_ERR_DTDM("Can't prevent PC from goin into sleep mode");
+	else
+		LOG_INFO_DTDM("Sleep mode is disabled");
 }
 
 ComPtr<ID3D12Device> d912pxy_device::SelectSuitableGPU()
@@ -444,6 +462,12 @@ ComPtr<ID3D12Device> d912pxy_device::SelectSuitableGPU()
 		D3D_FEATURE_LEVEL_9_2,
 		D3D_FEATURE_LEVEL_9_1
 	};
+
+	bool intelSelected = false;
+	bool autoSelect = d912pxy_s.config.GetValueUI64(PXY_CFG_DX_FORCE_GPU_INDEX) == -1LL;
+
+	if (autoSelect)
+		LOG_INFO_DTDM("Selecting DXGI adapter by vidmem size (and some magic)");
 
 	LOG_INFO_DTDM("Enum DXGI adapters");
 	{
@@ -504,22 +528,44 @@ ComPtr<ID3D12Device> d912pxy_device::SelectSuitableGPU()
 				dxgiAdapterDesc2.Description
 			);
 
-			if (operational && (maxVidmem < dxgiAdapterDesc2.DedicatedVideoMemory))
-			{				
-				if ((maxVidmem > 0) && (dxgiAdapterDesc2.VendorId == 0x8086))
-				{
-					LOG_WARN_DTDM("Under prioritized Intel GPU have more VRAM than other non-Intel GPU. Odd, skipping Intel GPU.");
-				}
-				else {
-					maxVidmem = dxgiAdapterDesc2.DedicatedVideoMemory;
-					gpu = dxgiAdapter4;
-
-					usingFeatures = featureToCreate[operational];
-				}
+			if (i == d912pxy_s.config.GetValueUI64(PXY_CFG_DX_FORCE_GPU_INDEX))
+			{
+				LOG_INFO_DTDM("GPU of index %u is being used due to config");
 			}
+			else {
+
+				if (!autoSelect)
+					continue;
+
+				if (!operational)
+					continue;
+
+				if (maxVidmem >= dxgiAdapterDesc2.DedicatedVideoMemory)
+				{
+					//re-try if intel supposedly integrated gpu is selected
+					if (!intelSelected)
+						continue;
+				}
+
+				bool isIntel = dxgiAdapterDesc2.VendorId == 0x8086;
+				if (isIntel && gpu)
+				{
+					LOG_WARN_DTDM("Skipping Intel GPU due to another being already selected");
+					continue;
+				}
+
+				if (intelSelected && !isIntel)
+					LOG_WARN_DTDM("Skipping Intel GPU for %s", dxgiAdapterDesc2.Description);
+				intelSelected = isIntel;
+			}
+
+
+			maxVidmem = dxgiAdapterDesc2.DedicatedVideoMemory;
+			gpu = dxgiAdapter4;
+
+			usingFeatures = featureToCreate[operational];
 		}
 	}
-	LOG_INFO_DTDM("Selecting DXGI adapter by vidmem size");
 
 	if (gpu == nullptr)
 	{
@@ -532,6 +578,8 @@ ComPtr<ID3D12Device> d912pxy_device::SelectSuitableGPU()
 	gpu_totalVidmemMB = (DWORD)(pDesc.DedicatedVideoMemory >> 20llu);
 
 	LOG_INFO_DTDM("GPU name: %s vidmem: %u Mb", pDesc.Description, gpu_totalVidmemMB);
+
+	bigVRAMamount = (gpu_totalVidmemMB >> 10) >= 4;
 
 	//nvidia 
 	if (pDesc.VendorId == 0x10de)

@@ -31,24 +31,58 @@ namespace d912pxy {
 
 			class ReshadeCompat : public ModHandler
 			{
-				bool afterFirstUiDraw;
-				bool doCopy;
-				PassDetector* uiPass;
-				SimilarTex colorCopy;
-				SimilarTex depthCopy;
 
-				void copySceneColorAndDepth(d912pxy_replay_thread_context* rpContext);
+			public:
+				enum
+				{
+					TARGET_COLOR = 0,
+					TARGET_DEPTH = 1,
+					TARGET_OPAQUE = 2,
+					TARGET_GBUF0 = 3,
+					TARGET_GBUF1 = 4,
+					TARGET_EARLY_DEPTH = 5,
+					TARGET_BB_SIZED_COUNT = 6,
+					TARGET_SHCONSTS0 = 6,
+					TARGET_TOTAL_COUNT = 7
+				};
+
+			private:
+				bool shouldRecordShConsts = false;
+				PassDetector2* passes;
+				d912pxy_surface* targets[TARGET_BB_SIZED_COUNT] = { 0 };
+
+				uint64_t uiPass;
+				uint64_t depthPass;
+				uint64_t shadowPass;
+				uint64_t normalPass;
+				uint64_t resolvePass;
+				uint64_t transparentPass;
+
+				union rsad_Data
+				{
+					float fv4[4];
+					uint32_t ui4[4];
+				};
+
+				typedef void (*rsad_supplyTexture)(uint32_t idx, ID3D12Resource* res);
+				typedef void (*rsad_setData)(uint32_t idx, rsad_Data* value);
+
+				HMODULE reshadeAddonLib;
+				rsad_supplyTexture rsadSupplyTexture;
+				rsad_setData rsadSetData;
+				ShaderConstRecorder* shConsts = nullptr;
 
 			public:
 				ReshadeCompat();
 
 				//void Init();
-				//void UnInit();
+				void UnInit();
 
 				void RP_PSO_Change(d912pxy_replay_item::dt_pso_raw* rpItem, d912pxy_replay_thread_context* rpContext) override;
-				void RP_PreDraw(d912pxy_replay_item::dt_draw_indexed* rpItem, d912pxy_replay_thread_context* rpContext) override;
-				//void RP_PostDraw(d912pxy_replay_item::dt_draw_indexed* rpItem, d912pxy_replay_thread_context* rpContext) override;
+				//void RP_PreDraw(d912pxy_replay_item::dt_draw_indexed* rpItem, d912pxy_replay_thread_context* rpContext) override;
+				void RP_PostDraw(d912pxy_replay_item::dt_draw_indexed* rpItem, d912pxy_replay_thread_context* rpContext) override;
 				void RP_RTDSChange(d912pxy_replay_item::dt_om_render_targets* rpItem, d912pxy_replay_thread_context* rpContext) override;
+				void RP_FrameStart() override;
 
 				//void IFR_Start() override;
 				//void IFR_End() override;

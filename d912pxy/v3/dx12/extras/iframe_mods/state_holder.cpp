@@ -34,13 +34,13 @@ StateHolder::StateHolder(const d912pxy_replay_thread_context& rpState, uint32_t 
 
 StateHolder::~StateHolder()
 {
-	if (restorationMask & ST_PSO)
+	if ((restorationMask & ST_PSO) && prevState.pso)
 		prevState.cl->SetPipelineState(prevState.pso);
 
-	if (restorationMask & ST_INDEX)
+	if ((restorationMask & ST_INDEX) && prevState.tracked.indexBuf)
 		prevState.tracked.indexBuf->IFrameBindIB(prevState.cl);
 
-	if (restorationMask & ST_VSTREAM0)
+	if ((restorationMask & ST_VSTREAM0) && prevState.tracked.streams[0].buffer)
 	{
 		prevState.tracked.streams[0].buffer->IFrameBindVB(
 			prevState.tracked.streams[0].stride,
@@ -53,5 +53,25 @@ StateHolder::~StateHolder()
 	if (restorationMask & ST_PRIMTOPO)
 	{
 		prevState.cl->IASetPrimitiveTopology((D3D12_PRIMITIVE_TOPOLOGY)prevState.tracked.primType);
+	}
+
+	if (restorationMask & ST_RTDS)
+	{
+		D3D12_CPU_DESCRIPTOR_HANDLE bindedSurfacesDH[1 + PXY_INNER_MAX_RENDER_TARGETS] = { 0 };
+
+		if (prevState.tracked.surfBind[0])
+			bindedSurfacesDH[0] = prevState.tracked.surfBind[0]->GetDHeapHandle();
+
+		int totalRTs = 0;
+		for (int i = 0; i != PXY_INNER_MAX_RENDER_TARGETS; ++i)
+			if (prevState.tracked.surfBind[i + 1])
+			{
+				++totalRTs;
+				bindedSurfacesDH[i + 1] = prevState.tracked.surfBind[i + 1]->GetDHeapHandle();
+			}
+			else
+				break;
+
+		prevState.cl->OMSetRenderTargets(totalRTs, totalRTs ? &bindedSurfacesDH[1] : nullptr, false, prevState.tracked.surfBind[0] ? &bindedSurfacesDH[0] : nullptr);
 	}
 }

@@ -44,6 +44,7 @@ public:
 	ID3D12PipelineState* GetPtr();
 
 	static size_t GetTotalPendingItems();
+	static bool hwCacheAllowed;
 
 private:	
 	void CreatePSO(D3D12_GRAPHICS_PIPELINE_STATE_DESC& fullDesc);
@@ -63,6 +64,7 @@ private:
 	void RCEFilterUnusedRegs(char** ioBlock, UINT elements);
 	void RCEFixIOBlocksOrdering(char** vsOut, char** psIn, UINT vsOutCnt, UINT psInCnt);
 	void RCEApplyPCFSampler(char* source, UINT stage);
+	void RCEApplyDX9EmulFlags(char* source, UINT8 flags);
 
 	void AfterCompileRelease();
 

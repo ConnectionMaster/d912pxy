@@ -40,6 +40,33 @@ namespace d912pxy {
 						return 0;
 					return _wtoi(raw);
 				}
+
+				uint64_t ui64() const
+				{
+					if (!raw)
+						return 0;
+
+					return _wtoi64(raw);
+				}
+
+				uint64_t ux64() const
+				{
+					if (!raw)
+						return 0;
+
+					uint64_t ret;
+					swscanf(raw, L"%llX", &ret);
+
+					return ret;
+				}
+
+				bool b() const
+				{
+					if (!raw)
+						return false;
+
+					return ((raw[0] == L'Y') || (raw[0] == L'y')) ? true : false;
+				}
 			};
 
 			class ModHandler : public d912pxy_noncom
@@ -52,6 +79,7 @@ namespace d912pxy {
 				virtual void RP_PreDraw(d912pxy_replay_item::dt_draw_indexed*, d912pxy_replay_thread_context*) {};
 				virtual void RP_PostDraw(d912pxy_replay_item::dt_draw_indexed*, d912pxy_replay_thread_context*) {};
 				virtual void RP_RTDSChange(d912pxy_replay_item::dt_om_render_targets*, d912pxy_replay_thread_context*) {};
+				virtual void RP_FrameStart() {};
 
 				virtual void IFR_Start() {};
 				virtual void IFR_End() {};
@@ -72,7 +100,9 @@ namespace d912pxy {
 				Manager();
 				~Manager();
 
+				const ModConfigEntry& configValF(const wchar_t* key, ...);
 				const ModConfigEntry& configVal(const wchar_t* key);
+				const ModConfigEntry& configValM(const wchar_t* key);
 				void pushMod(ModHandler* mod);
 			
 				void Init();
@@ -82,6 +112,7 @@ namespace d912pxy {
 				void RP_PreDraw(d912pxy_replay_item::dt_draw_indexed* rpItem, d912pxy_replay_thread_context* rpContext);
 				void RP_PostDraw(d912pxy_replay_item::dt_draw_indexed* rpItem, d912pxy_replay_thread_context* rpContext);
 				void RP_RTDSChange(d912pxy_replay_item::dt_om_render_targets* rpItem, d912pxy_replay_thread_context* rpContext);
+				void RP_FrameStart();
 
 				void IFR_Start();
 				void IFR_End();

@@ -151,7 +151,12 @@ void d912pxy_replay::Replay(UINT items, ID3D12GraphicsCommandList * cl, d912pxy_
 
 	if (extras.enable && (context.tid == 0))
 	{
+		context.tracked.surfBind[0] = nullptr;
+		context.tracked.surfBind[1] = nullptr;
+		context.tracked.primType = D3DPT_TRIANGLELIST;
 		context.cl = cl;
+
+		d912pxy_s.iframeMods.RP_FrameStart();
 
 		if (extras.pairTracker.enable)
 			extras.pairTracker.nextFrame();
@@ -308,6 +313,15 @@ void d912pxy_replay::Free()
 	d912pxy_noncom::UnInit();
 }
 
+void d912pxy_replay::CleanupExtras()
+{
+	if (extras.enable)
+	{
+		d912pxy_s.spairInfo.UnInit();
+		d912pxy_s.iframeMods.UnInit();
+	}
+}
+
 void d912pxy_replay::Start()
 {
 	LOG_DBG_DTDM("RP START");
@@ -319,6 +333,7 @@ void d912pxy_replay::Start()
 
 void d912pxy_replay::IFrameStart()
 {
+
 }
 
 void d912pxy_replay::thread_transit_data::Reset()

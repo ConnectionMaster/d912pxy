@@ -50,33 +50,27 @@ void d912pxy_shader_db::UnInit()
 	d912pxy_noncom::UnInit();
 }
 
+UINT32 d912pxy_shader_db::CalcTokenCount(DWORD* code)
+{
+	UINT32 ret = 0;
+	//use inst len for sh ver 2 and up
+	bool sm1 = D3DSHADER_VERSION_MAJOR(code[ret++]) <= 1;
+
+	d912pxy_dxbc9::token tok;
+	tok.load(code[ret], d912pxy_dxbc9::token_type::unk);
+
+	while (tok.iType != d912pxy_dxbc9::token_type::end)
+	{
+		ret += tok.length(sm1);
+		tok.load(code[ret], d912pxy_dxbc9::token_type::unk);
+	}
+	return ret + 1;
+}
+
 d912pxy_shader_uid d912pxy_shader_db::GetUID(DWORD * code, UINT32* len)
 {
-/*
-	//this is not optimal! but fancy? FUU!
-	UINT ctr = 0;
-	while (code[ctr] != 0x0000FFFF)
-		++ctr;
-
-	*len = (ctr >> 2) + 1;
-	return d912pxy::Hash64(d912pxy::MemoryBlock((void*)code, len));
-*/
-
-	UINT64 hash = 0xcbf29ce484222325;
-	UINT ctr = 0;
-
-	while (code[ctr >> 2] != 0x0000FFFF)
-	{
-		UINT8 dataByte = ((UINT8*)code)[ctr];
-
-		hash = hash ^ dataByte;
-		hash = hash * 1099511628211;
-		++ctr;
-	}
-
-	*len = (ctr >> 2) + 1;
-
-	return hash;
+	*len = CalcTokenCount(code);
+	return d912pxy::Hash64(d912pxy::MemoryArea((void*)code, (*len * sizeof(DWORD)))).value;
 }
 
 d912pxy_shader_pair_hash_type d912pxy_shader_db::GetPairUID(d912pxy_shader * vs, d912pxy_shader * ps)
@@ -104,18 +98,4 @@ d912pxy_shader_pair* d912pxy_shader_db::GetPair(d912pxy_shader* vs, d912pxy_shad
 	}
 
 	return *ref.val;
-}
-
-void d912pxy_shader_db::DeletePair(d912pxy_shader_pair_hash_type ha)
-{
-	d912pxy_shader_pair* pair = nullptr;
-
-	{
-		d912pxy::mt::containter::OptRef<ShaderPairStorage> ref(shaderPairs, ha);
-
-		if (ref.val)
-			pair = *ref.val;
-	}
-
-	delete pair;
 }

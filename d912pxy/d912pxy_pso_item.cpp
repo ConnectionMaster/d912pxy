@@ -25,6 +25,7 @@ SOFTWARE.
 #include "stdafx.h"
 
 std::atomic<size_t> d912pxy_pso_item::itemsInCompile { 0 };
+bool d912pxy_pso_item::hwCacheAllowed = false;
 
 d912pxy_pso_item* d912pxy_pso_item::d912pxy_pso_item_com(d912pxy_trimmed_pso_desc* sDsc)
 {
@@ -155,30 +156,38 @@ void d912pxy_pso_item::CreatePSO(D3D12_GRAPHICS_PIPELINE_STATE_DESC& fullDesc)
 	};
 
 	char fullPsoName[255];
-	sprintf(fullPsoName, "%016llX_%016llX_%08lX", entryData.vs, entryData.ps, entryData.pso.data());
+	sprintf(fullPsoName, "%016llX_%016llX_%016llX", entryData.vs, entryData.ps, entryData.pso.data());
 
 	LOG_DBG_DTDM("Compiling PSO %S", fullPsoName);
 
 	d912pxy_vfs_path hwCachePath(fullPsoName, d912pxy_vfs_bid::pso_hw_cache);
-	d912pxy_mem_block hwBlob = d912pxy_s.vfs.ReadFile(hwCachePath);
-	fullDesc.CachedPSO.CachedBlobSizeInBytes = hwBlob.size();
-	fullDesc.CachedPSO.pCachedBlob = hwBlob.ptr();
+	ID3D12PipelineState* obj = nullptr;
+	HRESULT psoHRet;
 
-	ID3D12PipelineState* obj;
-	HRESULT psoHRet = d912pxy_s.dx12.dev->CreateGraphicsPipelineState(&fullDesc, IID_PPV_ARGS(&obj));
-
-	//hw changed, driver changed, or cache is invalid for some obscure reason
-	if (FAILED(psoHRet))
+	if (hwCacheAllowed)
 	{
-		LOG_ERR_DTDM("cached CreateGraphicsPipelineState error %lX for %S", psoHRet, fullPsoName);
+		d912pxy_mem_block hwBlob = d912pxy_s.vfs.ReadFile(hwCachePath);
+		fullDesc.CachedPSO.CachedBlobSizeInBytes = hwBlob.size();
+		fullDesc.CachedPSO.pCachedBlob = hwBlob.ptr();
 
+		psoHRet = d912pxy_s.dx12.dev->CreateGraphicsPipelineState(&fullDesc, IID_PPV_ARGS(&obj));
+
+		//hw changed, driver changed, or cache is invalid for some obscure reason
+		if (FAILED(psoHRet))
+		{
+			LOG_ERR_DTDM("cached CreateGraphicsPipelineState error %lX for %S", psoHRet, fullPsoName);
+		}
+
+		if (!hwBlob.isNullptr())
+			hwBlob.Delete();
+	}
+
+	if (!obj)
+	{
 		fullDesc.CachedPSO.pCachedBlob = nullptr;
 		fullDesc.CachedPSO.CachedBlobSizeInBytes = 0;
 		psoHRet = d912pxy_s.dx12.dev->CreateGraphicsPipelineState(&fullDesc, IID_PPV_ARGS(&obj));
 	}
-
-	if (!hwBlob.isNullptr())
-		hwBlob.Delete();
 
 	if (FAILED(psoHRet))
 	{
@@ -200,7 +209,7 @@ void d912pxy_pso_item::CreatePSO(D3D12_GRAPHICS_PIPELINE_STATE_DESC& fullDesc)
 		LOG_ERR_DTDM("full pso desc dump %S", dumpString);
 	}
 	else {
-		if (!fullDesc.CachedPSO.pCachedBlob)
+		if (!fullDesc.CachedPSO.pCachedBlob && hwCacheAllowed)
 		{
 			ID3DBlob* hwBlob = nullptr;
 			obj->GetCachedBlob(&hwBlob);
@@ -293,6 +302,9 @@ bool d912pxy_pso_item::PerformRCE(char* alias, D3D12_GRAPHICS_PIPELINE_STATE_DES
 	//pass 2 - change tex2d lookup to pcf lookup if needed
 	if (desc->val.compareSamplerStage != d912pxy_trimmed_pso_desc::NO_COMPARE_SAMPLERS)
 		RCEApplyPCFSampler(HLSLsource[1].c_arr<char>(), desc->val.compareSamplerStage);
+
+	if (desc->val.dx9emulFlags)
+		RCEApplyDX9EmulFlags(HLSLsource[1].c_arr<char>(), desc->val.dx9emulFlags);
 
 	return true;
 }
@@ -484,6 +496,32 @@ void d912pxy_pso_item::RCEApplyPCFSampler(char* source, UINT stage)
 	}
 }
 
+const char* psWriteEmulReplacements[] =
+{
+	//"dx9_ps_write_emulation(dx9_ret_color_reg_ac);//RCE MARK",
+	  "dx9_ps_write_emulation(dx9_ret_color_reg_ac);//default ",//no extra emulation 0 flags
+	  "dx9_ps_write_emulation_at(dx9_ret_color_reg_ac);//flg01",//no extra emulation 1 flags
+	  "dx9_ps_write_emulation_srgb(dx9_ret_color_reg_ac);//f02",//no extra emulation 2 flags
+	  "dx9_ps_write_emulation_at_srgb(dx9_ret_color_reg_ac);//",//no extra emulation 3 flags
+	  "out of range bullshit marker"
+};
+
+void d912pxy_pso_item::RCEApplyDX9EmulFlags(char* source, UINT8 flags)
+{
+	const char* marker = "dx9_ps_write_emulation(dx9_ret_color_reg_ac);//RCE MARK";
+	const uint32_t markerSize = 55;
+
+	char* writeTarget = strstr(source, marker);
+
+	if (!writeTarget)
+	{
+		LOG_ERR_DTDM("No write marker found for PS dx9 emul RCE, this is totally wrong!");
+		return;
+	}
+
+	memcpy(writeTarget, psWriteEmulReplacements[flags], 55);
+}
+
 void d912pxy_pso_item::AfterCompileRelease()
 {
 	delete dx12Desc;
@@ -521,7 +559,7 @@ void d912pxy_pso_item::RealtimeIntegrityCheck(D3D12_GRAPHICS_PIPELINE_STATE_DESC
 {
 	d912pxy_shader_pair_hash_type pairUID = desc->GetShaderPairUID();
 	d912pxy_trimmed_pso_desc::StorageKey psoKey(desc->GetValuePart());	
-	sprintf(derivedAlias, "%016llX_%08lX", pairUID, psoKey.val.value);
+	sprintf(derivedAlias, "%016llX_%016llX", pairUID, psoKey.val.value);
 	LOG_DBG_DTDM("DX9 PSO realtime check emulation for alias %s", derivedAlias);
 
 	derivedName = GetDerivedNameByAlias(derivedAlias);

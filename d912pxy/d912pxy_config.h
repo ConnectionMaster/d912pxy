@@ -28,8 +28,11 @@ SOFTWARE.
 typedef enum d912pxy_config_value {
 	PXY_CFG_POOLING_UPLOAD_ALLOC_STEP = 0,
 	PXY_CFG_POOLING_UPLOAD_LIMITS = 1,
+	PXY_CFG_POOLING_UPLOAD_LIMITS_BIG,
 	PXY_CFG_POOLING_VSTREAM_ALLOC_STEP,
+	PXY_CFG_POOLING_VSTREAM_ALLOC_STEP_BIG,
 	PXY_CFG_POOLING_VSTREAM_LIMITS,
+	PXY_CFG_POOLING_VSTREAM_LIMITS_BIG,
 	PXY_CFG_POOLING_SURFACE_ALLOC_STEP,
 	PXY_CFG_POOLING_SURFACE_LIMITS,
 	PXY_CFG_POOLING_LIFETIME,
@@ -45,6 +48,7 @@ typedef enum d912pxy_config_value {
 	PXY_CFG_SDB_FORCE_UNUSED_REGS,
 	PXY_CFG_SDB_NAN_GUARD_FLAG,
 	PXY_CFG_SDB_PRECOMPILE_LIMIT,
+	PXY_CFG_SDB_ALLOW_HW_CACHE,
 	PXY_CFG_REPLAY_BEHAIVOUR,
 	PXY_CFG_REPLAY_THREADS,	
 	PXY_CFG_REPLAY_ITEMS_PER_BATCH,
@@ -65,6 +69,7 @@ typedef enum d912pxy_config_value {
 	PXY_CFG_DX_DBG_RUNTIME,
 	PXY_CFG_DX_FRAME_LATENCY,
 	PXY_CFG_DX_ROUTE_TO_DX9,
+	PXY_CFG_DX_FORCE_GPU_INDEX,
 	PXY_CFG_MISC_GPU_TIMEOUT,		
 	PXY_CFG_MISC_NV_DISABLE_THROTTLE,	
 	PXY_CFG_COMPAT_OCCLUSION,
@@ -77,6 +82,7 @@ typedef enum d912pxy_config_value {
 	PXY_CFG_COMPAT_DUP_UNSAFE,
 	PXY_CFG_COMPAT_DHEAP_MODE,
 	PXY_CFG_COMPAT_EXPLICIT_D3DCOMPILER,
+	PXY_CFG_COMPAT_RELAXED_GPU_SUBMISSION,
 	PXY_CFG_VFS_ROOT,
 	PXY_CFG_VFS_MEMCACHE_MASK,
 	PXY_CFG_VFS_PACK_DATA,
@@ -137,7 +143,7 @@ private:
 	d912pxy_config_value_dsc data[PXY_CFG_CNT] = {
 		{
 			L"pooling", 
-			L"upload_alloc_step", 
+			L"upload_alloc_step",
 			L"16",
 			L"u r:0,1024",
 			L"upload segment allocation step",
@@ -145,8 +151,11 @@ private:
 			nullptr
 		},//PXY_CFG_POOLING_UPLOAD_ALLOC_STEP
 		{L"pooling", L"upload_limit", L"128"},//PXY_CFG_POOLING_UPLOAD_LIMITS		
+		{L"pooling", L"upload_limit_big", L"512"},//PXY_CFG_POOLING_UPLOAD_LIMITS_BIG
 		{L"pooling", L"vstream_alloc_step", L"16"},//PXY_CFG_POOLING_VSTREAM_ALLOC_STEP
+		{L"pooling", L"vstream_alloc_step_big", L"64"},//PXY_CFG_POOLING_VSTREAM_ALLOC_STEP_BIG
 		{L"pooling", L"vstream_limit", L"256"},//PXY_CFG_POOLING_VSTREAM_LIMITS
+		{L"pooling", L"vstream_limit_big", L"768"},//PXY_CFG_POOLING_VSTREAM_LIMITS_BIG
 		{L"pooling", L"surface_alloc_step",L"0"},//PXY_CFG_POOLING_SURFACE_ALLOC_STEP
 		{L"pooling", L"surface_limits",L"00000"},//PXY_CFG_POOLING_SURFACE_LIMITS
 		{L"pooling", L"lifetime",L"10000"},//PXY_CFG_POOLING_LIFETIME
@@ -171,6 +180,16 @@ private:
 			nullptr
 		},
 		//PXY_CFG_SDB_PRECOMPILE_LIMIT
+		{
+			L"sdb",
+			L"hw_cache",
+			L"0",
+			L"b r:0,1",
+			L"toggles hardware cache blob save & load",
+			L"enabling this value increases RAM usage & speeds up API-side PSO compilation",
+			nullptr
+		},
+		//PXY_CFG_SDB_ALLOW_HW_CACHE
 		{L"replay", L"replay", L"1"},//PXY_CFG_REPLAY_BEHAIVOUR
 		{L"replay", L"replay_threads", L"1"},//PXY_CFG_REPLAY_THREADS
 		{L"replay", L"items_per_batch", L"100"},//PXY_CFG_REPLAY_ITEMS_PER_BATCH
@@ -213,7 +232,15 @@ private:
 			L"enables and configures dxgi frame latency feature",
 			L"0 disables swapchain waits, any other value enables swapchain waits and trying to set this value as max frame latency"
 		},//PXY_CFG_DX_FRAME_LATENCY
-		{L"dx",L"route_to_dx9",L"0"},//PXY_CFG_DX_ROUTE_TO_DX9		
+		{L"dx",L"route_to_dx9",L"0"},//PXY_CFG_DX_ROUTE_TO_DX9
+		{
+			L"dx",
+			L"force_gpu_index",
+			L"-1",
+			L"u r:-1,inf",
+			L"forces usage of GPU with specified index",
+			L"-1 is auto, any other value will force specified GPU usage"
+		},//PXY_CFG_DX_FORCE_GPU_INDEX
 		{L"misc",L"gpu_timeout",L"5000"},//PXY_CFG_MISC_GPU_TIMEOUT
 		{L"misc",L"nv_disable_throttle", L"0"},//PXY_CFG_MISC_NV_DISABLE_THROTTLE		
 		{L"compat",L"occlusion",L"2"},//PXY_CFG_COMPAT_OCCLUSION
@@ -233,8 +260,18 @@ private:
 			L"Allows to use d912pxy supplied d3d compiler dll",
 			L"If 1 uses d3d compiler 27 v10 lib from 12on7 instead of default one"
 		},//PXY_CFG_COMPAT_EXPLICIT_D3DCOMPILER
+		{
+			L"compat",
+			L"relaxed_gpu_submission",
+			L"0",
+			L"b r:0,1",
+            L"Controls GPU work submission",
+			L"If 0 uses agressive submit-before-wait, if 1 uses relaxed wait-before-submit."
+			L"Relaxed submission tend to underutilize GPU in gpu limited scenarios"
+			L"Use when TDR crashes or system instability are encountered"
+		},//PXY_CFG_COMPAT_RELAXED_GPU_SUBMISSION
 		{L"vfs", L"root", L"./d912pxy/pck"},//PXY_CFG_VFS_ROOT
-		{L"vfs", L"memcache_mask", L"63"},//PXY_CFG_VFS_MEMCACHE_MASK
+		{L"vfs", L"memcache_mask", L"224"},//PXY_CFG_VFS_MEMCACHE_MASK
 		{L"vfs", L"pack_data", L"0"},//PXY_CFG_VFS_PACK_DATA
 		{L"vfs", L"write_mask", L"0"},//PXY_CFG_VFS_WRITE_MASK
 		{L"extras", L"enable", L"1"},//PXY_CFG_EXTRAS_ENABLE

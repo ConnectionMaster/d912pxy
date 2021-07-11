@@ -40,7 +40,6 @@ void d912pxy_gpu_que::Init(UINT iMaxCleanupPerSync, UINT iMaxRefernecedObjs, UIN
 
 	InitThread("d912pxy gpu exec", 0);
 	
-	gpuExecuteTimeout = d912pxy_s.config.GetValueUI32(PXY_CFG_MISC_GPU_TIMEOUT);
 	mLists = new d912pxy_ringbuffer<d912pxy_gpu_cmd_list*>(PXY_INNER_GPU_QUEUE_BUFFER_COUNT, 0);
 
 	D3D12_COMMAND_QUEUE_DESC desc = {};
@@ -64,6 +63,8 @@ void d912pxy_gpu_que::Init(UINT iMaxCleanupPerSync, UINT iMaxRefernecedObjs, UIN
 	EnableGID(CLG_SEQ, PXY_INNER_CLG_PRIO_LAST);
 
 	d912pxy_s.dx12.cl = mLists->GetElement();
+
+	relaxedSubmission = d912pxy_s.config.GetValueB(PXY_CFG_COMPAT_RELAXED_GPU_SUBMISSION);
 }
 
 void d912pxy_gpu_que::UnInit()
@@ -96,7 +97,7 @@ void d912pxy_gpu_que::UnInit()
 
 HRESULT d912pxy_gpu_que::ExecuteCurrentGPUWork(UINT doSwap)
 {
-	HRESULT ret;
+	HRESULT ret = S_OK;
 
 	if (doSwap)
 	{
@@ -107,59 +108,19 @@ HRESULT d912pxy_gpu_que::ExecuteCurrentGPUWork(UINT doSwap)
 
 	if (doSwap)
 		ret = mSwp->Swap();
-	else
-		ret = D3D_OK;
 
 	mCurrentGPUWork->Signal();
-	
 		
 	return ret;
 }
 
 HRESULT d912pxy_gpu_que::ExecuteCommandsImm(UINT doSwap)
 {
-	HRESULT ret = 0;
-
-	if (!WaitForExecuteCompletion())
-		return S_OK;
-
-	WaitForGPU();
-
-	SwitchCurrentCL();
-
-	ret = ExecuteCurrentGPUWork(doSwap);
-
-	return ret;
-}
-
-HRESULT d912pxy_gpu_que::ExecuteCommands(UINT doSwap)
-{
-	HRESULT ret = 0;
 	FRAME_METRIC_EXEC(1)
 
-	if (!WaitForExecuteCompletion())
-		return S_OK;
-	
-	if (swapAsked != S_OK)	
-		doSwap = 0;	
-
-	SwitchCurrentCL();
-
-	if (doSwap)
-	{
-		swapAsked = doSwap;
-		if (mSwp)
-		{
-			ret = mSwp->SwapCheck();
-			if (ret != S_OK)
-				swapAsked = 0;
-		}
-	}
-		
-	IssueWork();
+	HRESULT ret = SwitchCurrentCL(doSwap);
 
 	FRAME_METRIC_EXEC(0)
-
 	return ret;
 }
 
@@ -208,15 +169,6 @@ d912pxy_gpu_cmd_list * d912pxy_gpu_que::GetCommandList()
 	return mLists->GetElement();
 }
 
-void d912pxy_gpu_que::ThreadJob()
-{
-	swapAsked = ExecuteCurrentGPUWork(swapAsked);
-	
-	WaitForGPU();
-
-	SignalWorkCompleted();
-}
-
 void d912pxy_gpu_que::EnableGID(d912pxy_gpu_cmd_list_group id, UINT32 prio)
 {
 	for (int i = 0; i != PXY_INNER_GPU_QUEUE_BUFFER_COUNT; ++i)
@@ -225,16 +177,35 @@ void d912pxy_gpu_que::EnableGID(d912pxy_gpu_cmd_list_group id, UINT32 prio)
 	}
 }
 
-void d912pxy_gpu_que::SwitchCurrentCL()
+HRESULT d912pxy_gpu_que::SwitchCurrentCL(UINT doSwap)
 {
 	//we are commiting our commands list, so we must wait while new one is setup
 	d912pxy_s.dev.LockAsyncThreads();
-		
+	
 	//execute current command List
 	//iterate to next
 	//and write back this one to que
 	//also make a mark that we executing something on gpu
+	d912pxy_gpu_cmd_list* oldWork = mCurrentGPUWork;
+	if (oldWork && relaxedSubmission)
+	{
+		oldWork->Wait();
+		oldWork = nullptr;
+	}
 	mCurrentGPUWork = mLists->GetElement();
+
+	HRESULT ret = D3DERR_DEVICEREMOVED;
+	HRESULT ret2 = D3DERR_DEVICEREMOVED;
+	if (doSwap && mSwp)
+		ret = mSwp->SwapCheck();
+
+	ret2 = ExecuteCurrentGPUWork(ret == S_OK);
+	if (ret == S_OK)
+		ret = ret2;
+
+	//wait after submit, keep GPU busy
+	if (oldWork)
+		oldWork->Wait();
 
 	mLists->Next();
 	mLists->WriteElement(mCurrentGPUWork);
@@ -245,24 +216,6 @@ void d912pxy_gpu_que::SwitchCurrentCL()
 
 	//we have a new list setted up, so we can continue to commit data
 	d912pxy_s.dev.UnLockAsyncThreads();
-}
 
-UINT d912pxy_gpu_que::WaitForExecuteCompletion()
-{
-	//megai2: this happens if we hit DXGI deadlock or merely draw something more then 5 seconds by default
-	//or if we use RenderDoc to capture something
-	if (!WaitForIssuedWorkCompletionTimeout(gpuExecuteTimeout))
-	{			
-		LOG_ERR_DTDM("WaitForExecuteCompletion timeout/deadlock");
-
-		RestartThread();
-
-		SignalWorkCompleted();
-		mCurrentGPUWork->Signal();
-		WaitForGPU();
-
-		mSwp->ReanimateDXGI();		
-	}
-
-	return 1;
+	return ret;
 }

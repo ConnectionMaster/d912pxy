@@ -386,7 +386,7 @@ void d912pxy_iframe::StateSafeFlush(UINT fullFlush)
 	if (fullFlush)
 		d912pxy_s.dx12.que.Flush(0);
 	else 
-		d912pxy_s.dx12.que.ExecuteCommands(0);
+		d912pxy_s.dx12.que.ExecuteCommandsImm(0);
 	Start();
 
 	//megai2: rebind surfaces as they are resetted to swapchain back buffers by Start()
@@ -662,7 +662,6 @@ void d912pxy_iframe::CommitBatchTailProc(D3DPRIMITIVETYPE PrimitiveType, INT Bas
 		batchCommitData.instanceCount,
 		startIndex, 
 		BaseVertexIndex, 
-		MinVertexIndex, 
 		d912pxy_s.render.batch.FinishCurrentDraw()
 	);
 
